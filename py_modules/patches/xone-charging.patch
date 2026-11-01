@@ -1,0 +1,62 @@
+Report charging: bit 4 of the GIP status byte is set while a controller charges
+(seen on an Elite 2: 0x8a unplugged, 0x9a/0x9b on a charger).
+
+--- a/bus/bus.h
++++ b/bus/bus.h
+@@ -87,6 +87,9 @@
+ 	struct gip_audio_config audio_config_out;
+ 
+ 	struct gip_serial_number serial;
++
++	/* status packet bit 4, see gip_report_battery */
++	bool battery_charging;
+ };
+ 
+ struct gip_driver_ops {
+--- a/bus/protocol.c
++++ b/bus/protocol.c
+@@ -22,6 +22,7 @@
+ 
+ #define GIP_BATT_LEVEL GENMASK(1, 0)
+ #define GIP_BATT_TYPE GENMASK(3, 2)
++#define GIP_STATUS_CHARGING BIT(4)
+ #define GIP_STATUS_CONNECTED BIT(7)
+ 
+ #define GIP_VKEY_LEFT_WIN 0x5b
+@@ -1200,6 +1201,7 @@
+ 
+ 	batt_type = FIELD_GET(GIP_BATT_TYPE, pkt->status);
+ 	batt_lvl = FIELD_GET(GIP_BATT_LEVEL, pkt->status);
++	client->battery_charging = pkt->status & GIP_STATUS_CHARGING;
+ 
+ 	if (down_trylock(&client->drv_lock))
+ 		return -EBUSY;
+--- a/driver/common.h
++++ b/driver/common.h
+@@ -12,6 +12,7 @@
+ #include "../bus/bus.h"
+ 
+ struct gip_battery {
++	struct gip_client *client;
+ 	struct power_supply *supply;
+ 	struct power_supply_desc desc;
+ 
+--- a/driver/common.c
++++ b/driver/common.c
+@@ -48,6 +48,7 @@
+ {
+ 	struct power_supply_config cfg = {};
+ 
++	batt->client = client;
+ 	batt->name = name;
+ 	batt->status = POWER_SUPPLY_STATUS_UNKNOWN;
+ 	batt->capacity = POWER_SUPPLY_CAPACITY_LEVEL_UNKNOWN;
+@@ -80,6 +81,8 @@
+ {
+ 	if (type == GIP_BATT_TYPE_NONE)
+ 		batt->status = POWER_SUPPLY_STATUS_NOT_CHARGING;
++	else if (batt->client->battery_charging)
++		batt->status = POWER_SUPPLY_STATUS_CHARGING;
+ 	else
+ 		batt->status = POWER_SUPPLY_STATUS_DISCHARGING;
+ 

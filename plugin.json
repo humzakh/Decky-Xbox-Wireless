@@ -1,0 +1,11 @@
+{
+  "name": "Xbox Wireless",
+  "author": "humzakh",
+  "flags": ["root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["controller", "xbox", "root"],
+    "description": "Pair and monitor Xbox wireless controllers using the xone driver: connected devices, battery levels, pairing and guide-button LED.",
+    "image": "https://raw.githubusercontent.com/dlundqvist/xone/master/logo.svg"
+  }
+}

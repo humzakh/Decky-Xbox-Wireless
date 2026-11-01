@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # tags, to find the last release
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm test
+      - name: Pick version
+        # the next patch after the last vMAJOR.MINOR.N tag, starting from package.json's version;
+        # bump MAJOR.MINOR in package.json to start a new series
+        run: |
+          base=$(node -p 'require("./package.json").version')
+          prefix="${base%.*}."
+          last=$(git tag -l "v$prefix*" | sed "s/^v$prefix//" | grep -E '^[0-9]+$' | sort -n | tail -1 || true)
+          if [ -n "$last" ]; then version="$prefix$((last + 1))"; else version=$base; fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          # Decky shows the plugin's version from package.json
+          node -e 'const f="package.json",p=require("./"+f);p.version=process.env.VERSION;require("fs").writeFileSync(f,JSON.stringify(p,null,2)+"\n")'
+      - run: ./deploy.sh zip
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" out/XboxWireless.zip --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes
