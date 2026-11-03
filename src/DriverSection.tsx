@@ -7,6 +7,9 @@ import { useXoneState } from "./useXoneState";
 const LOG_LINES = 12;
 
 function describe(status: DriverStatus) {
+  if (status.installed_version && status.restart_needed) {
+    return { label: `xone v${status.installed_version}`, description: "Restart to finish installing" };
+  }
   if (status.installed_version) {
     const loaded = status.loaded_version ? "loaded" : "not loaded";
     return { label: `xone v${status.installed_version}`, description: `${loaded} · kernel ${status.kernel}` };

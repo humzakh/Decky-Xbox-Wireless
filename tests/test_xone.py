@@ -62,7 +62,8 @@ class FakeSysfs:
         ))
 
     def add_client(self, adapter, client=0, gip_class="Windows.Xbox.Input.Gamepad",
-                   level="Normal", status="Discharging", led=True, usb_id=None, serial=None):
+                   level="Normal", status="Discharging", led=True, usb_id=None, serial=None,
+                   chat_mix=None):
         name = f"gip{adapter}.{client}"
         cdir = os.path.join(self.intf, f"gip{adapter}", name)
         self.write(os.path.join(cdir, "uevent"), f"DRIVER=x\nMODALIAS=gip:{gip_class}\n")
@@ -78,6 +79,9 @@ class FakeSysfs:
             self.write(os.path.join(id_dir, "product"), usb_id[1] + "\n")
             self.write(os.path.join(id_dir, "version"), (usb_id[2] if len(usb_id) > 2 else "0101") + "\n")
             self.write(os.path.join(os.path.dirname(id_dir), "uniq"), (serial or "") + "\n")
+        if chat_mix is not None:
+            self.write(os.path.join(cdir, "chat_mix"), f"{chat_mix}\n")
+            os.makedirs(os.path.join(self.root, "bus/xone-gip/devices"), exist_ok=True)
         if led:
             led_name = f"{name}:white:status"
             ldir = os.path.join(cdir, "leds", led_name)
@@ -218,6 +222,8 @@ class PluginTest(unittest.TestCase):
         self.plugin.snapshot_json = None
         self.plugin.poll_lock = asyncio.Lock()
         self.plugin.install_task = None
+        self.chat_mix_headsets = []
+        self.plugin.chat_mixer = types.SimpleNamespace(update=self.chat_mix_headsets.append)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -347,6 +353,18 @@ class PluginTest(unittest.TestCase):
             os.rmdir(os.path.join(self.fs.intf, f"gip{adapter}"))
         self.poll()
         self.assertFalse(self.plugin.state["dongles"][0]["stuck"])
+
+    def test_chat_mix_headsets_watched(self):
+        self.fs.set_slots([0, 1])
+        self.fs.add_client(0)
+        self.fs.add_client(1, gip_class="Windows.Xbox.Input.Headset", led=False, chat_mix=30)
+        self.poll()
+        self.assertEqual(self.plugin.state["dongles"][0]["devices"][1]["clients"][0]["chat_mix"], 30)
+        self.assertIsNone(self.plugin.state["dongles"][0]["devices"][0]["clients"][0]["chat_mix"])
+        self.assertEqual(self.chat_mix_headsets[-1], {"gip1.0": xone.chat_mix_path("gip1.0")})
+
+        asyncio.run(self.plugin.set_setting("chat_mix", False))
+        self.assertEqual(self.chat_mix_headsets[-1], {})
 
     def test_pairing_tracking(self):
         res = asyncio.run(self.plugin.set_pairing("1-2:1.0", True))

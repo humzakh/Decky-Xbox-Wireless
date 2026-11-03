@@ -12,6 +12,7 @@ import {
 import { Client, Device, Dongle, STUCK_FIX, STUCK_TITLE, powerOff, reportError, setPairing } from "./backend";
 import { batteryText } from "./battery";
 import { DeviceIcon } from "./DeviceIcon";
+import { ChatMixToggle } from "./ChatMixToggle";
 import { LedSlider } from "./LedSlider";
 
 function BatteryIcon({ client }: { client: Client }) {
@@ -55,7 +56,7 @@ export function DeviceRow({ device, dongleId }: { device: Device; dongleId?: str
   const [main, ...rest] = device.clients;
   const attachments = rest.filter((c) => !c.phantom);
   const canPowerOff = dongleId !== undefined && device.slot !== null;
-  const expandable = canPowerOff || !!main.led;
+  const expandable = canPowerOff || !!main.led || main.chat_mix !== null;
   const description = (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
       <span style={INLINE_ICON}>
@@ -94,6 +95,11 @@ export function DeviceRow({ device, dongleId }: { device: Device; dongleId?: str
           {main.led && (
             <PanelSectionRow>
               <LedSlider client={main} />
+            </PanelSectionRow>
+          )}
+          {main.chat_mix !== null && (
+            <PanelSectionRow>
+              <ChatMixToggle dial={main.chat_mix} />
             </PanelSectionRow>
           )}
           {canPowerOff && (

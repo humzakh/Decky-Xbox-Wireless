@@ -56,6 +56,7 @@ def steamos(readonly="enabled", installed=()):
 
 ALL_PACKAGES = installer.BUILD_PACKAGES + ["linux-neptune-72-headers"]
 CHARGING_PATCH = os.path.join(installer.PATCHES_DIR, "xone-charging.patch")
+CHAT_MIX_PATCH = os.path.join(installer.PATCHES_DIR, "xone-chat-mix.patch")
 
 
 class InstallerTest(unittest.TestCase):
@@ -63,6 +64,12 @@ class InstallerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         installer.FIRMWARE_GLOB = os.path.join(self.tmp.name, "xone_dongle_*.bin")
         installer.PACMAN_LOCK = os.path.join(self.tmp.name, "db.lck")
+        installer.MODULES_DIR = os.path.join(self.tmp.name, "module")
+
+    def load_module(self, name, srcversion):
+        os.makedirs(os.path.join(installer.MODULES_DIR, name))
+        with open(os.path.join(installer.MODULES_DIR, name, "srcversion"), "w") as f:
+            f.write(srcversion + "\n")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -94,6 +101,8 @@ class InstallerTest(unittest.TestCase):
             ["git", "clone", "--depth", "1", "--branch", "v0.5.8", installer.REPO, src],
             ["git", "apply", "--check", CHARGING_PATCH],
             ["git", "apply", CHARGING_PATCH],
+            ["git", "apply", "--check", CHAT_MIX_PATCH],
+            ["git", "apply", CHAT_MIX_PATCH],
             ["./install.sh"],
             ["./install/firmware.sh", "--skip-disclaimer"],
             ["modprobe", "xone-dongle"],
@@ -145,6 +154,20 @@ class InstallerTest(unittest.TestCase):
         ran = runner.ran()
         self.assertFalse(any(c[0] == "steamos-readonly" for c in ran))
         self.assertIn(["pacman-key", "--populate", "archlinux"], ran)
+
+    def test_restart_needed_when_old_modules_stay_loaded(self):
+        self.load_module("xone_gip", "OLD1")
+        self.load_module("xone_dongle", "SAME")
+        answers = steamos("disabled", installed=ALL_PACKAGES)
+        answers[("modinfo", "-F", "srcversion", "xone_gip")] = (0, "NEW1")
+        answers[("modinfo", "-F", "srcversion", "xone_dongle")] = (0, "SAME")
+        runner = FakeRunner(answers)
+        self.assertTrue(asyncio.run(installer.install(runner, "v0.5.8", self.tmp.name, "deck")))
+        self.assertIn("Still running the old xone_gip (in use); restart to load v0.5.8", runner.lines)
+        self.assertTrue(asyncio.run(installer.status(runner))["restart_needed"])
+
+        answers[("modinfo", "-F", "srcversion", "xone_gip")] = (0, "OLD1")
+        self.assertFalse(asyncio.run(installer.install(runner, "v0.5.8", self.tmp.name, "deck")))
 
     def test_status_detects_kernel_mismatch(self):
         runner = FakeRunner({

@@ -9,6 +9,7 @@ import time
 
 import decky
 
+import chat_mix
 import xone_installer as installer
 import xone_sysfs as xone
 
@@ -26,6 +27,8 @@ RELEASE_TAG_RE = re.compile(r"^v\d+(\.\d+)*$")
 DEFAULT_SETTINGS = {
     "notify_connect": True,
     "notify_low_battery": True,
+    # balance chat apps against game audio with a headset's dial
+    "chat_mix": True,
     # per controller, keyed by client "key": {"brightness": int, "mode": int}
     "leds": {},
 }
@@ -60,6 +63,8 @@ class Plugin:
             return {"ok": False, "error": f"unknown setting {key}"}
         self.settings[key] = value
         self._save_settings()
+        if key == "chat_mix":
+            self._update_chat_mix()
         return {"ok": True}
 
     async def set_pairing(self, dongle_id, enabled):
@@ -131,6 +136,11 @@ class Plugin:
         self.connecting_since = {}
         self.snapshot_json = None
         self.poll_lock = asyncio.Lock()
+        self.chat_mixer = chat_mix.ChatMixer(
+            chat_mix.Pactl(decky.DECKY_USER),
+            os.path.join(decky.DECKY_PLUGIN_SETTINGS_DIR, "chat_mix_volumes.json"),
+            decky.logger,
+        )
         decky.logger.info("Xbox Wireless plugin started, xone driver loaded: %s", xone.driver_loaded())
         while True:
             try:
@@ -159,8 +169,8 @@ class Plugin:
         os.makedirs(decky.DECKY_PLUGIN_LOG_DIR, exist_ok=True)
         log_path = os.path.join(decky.DECKY_PLUGIN_LOG_DIR, time.strftime("install-%Y%m%d-%H%M%S.log"))
         self.install_log.clear()
-        self.install = {"tag": tag, "running": True, "error": None, "started": time.time(),
-                        "finished": None, "log_file": log_path}
+        self.install = {"tag": tag, "running": True, "error": None, "restart_needed": False,
+                        "started": time.time(), "finished": None, "log_file": log_path}
         await decky.emit("install_state", self._install_info())
         loop = asyncio.get_event_loop()
 
@@ -175,22 +185,27 @@ class Plugin:
             try:
                 os.makedirs(workdir, exist_ok=True)
                 shutil.chown(workdir, decky.DECKY_USER, decky.DECKY_USER)
-                await installer.install(installer.Runner(log), tag, workdir, decky.DECKY_USER)
+                restart = await installer.install(installer.Runner(log), tag, workdir, decky.DECKY_USER)
             except Exception as e:
                 if not isinstance(e, installer.InstallError):
                     decky.logger.exception("install failed")
                 log(f"Install failed: {e}")
                 self.install["error"] = str(e)
+            else:
+                self.install["restart_needed"] = restart
 
         self.install["running"] = False
         self.install["finished"] = time.time()
         await decky.emit("install_state", self._install_info())
         if self.install["error"]:
             await self._notify("xone install failed", self.install["error"])
+        elif self.install["restart_needed"]:
+            await self._notify("xone installed", "Restart to finish installing")
         else:
             await self._notify("xone installed", f"{tag} is ready")
 
     async def _unload(self):
+        await self.chat_mixer.stop()
         decky.logger.info("Xbox Wireless plugin unloaded")
 
     async def _poll(self):
@@ -206,6 +221,8 @@ class Plugin:
             await self._handle_changes(prev, state)
         else:
             self._apply_led(self._led_clients(state))
+
+        self._update_chat_mix()
 
         for dongle in state["dongles"]:
             if dongle["pairing"]:
@@ -284,6 +301,15 @@ class Plugin:
             saved = self.settings["leds"].get(client["key"])
             if saved:
                 _result(xone.set_led, client["led"]["name"], saved.get("brightness"), saved.get("mode"))
+
+    def _update_chat_mix(self):
+        headsets = {}
+        if self.settings["chat_mix"] and self.state:
+            for _, device in self._all_devices(self.state):
+                for client in device["clients"]:
+                    if client["chat_mix"] is not None:
+                        headsets[client["id"]] = xone.chat_mix_path(client["id"])
+        self.chat_mixer.update(headsets)
 
     async def _notify(self, title, body):
         await decky.emit("notify", title, body)

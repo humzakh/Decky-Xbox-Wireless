@@ -33,6 +33,8 @@ export interface Client {
   name: string;
   battery: Battery | null;
   led: Led | null;
+  // game/chat dial of a headset, 0 (all game, turned forward) to 100 (all chat); null without one
+  chat_mix: number | null;
 }
 
 export interface Device {
@@ -73,6 +75,7 @@ export interface State {
 export interface Settings {
   notify_connect: boolean;
   notify_low_battery: boolean;
+  chat_mix: boolean;
   leds: Record<string, { brightness?: number; mode?: number }>;
 }
 
@@ -110,6 +113,8 @@ export interface DriverStatus {
   installed_version: string | null;
   stale_versions: string[];
   loaded_version: string | null;
+  // modules from before the last install are still running
+  restart_needed: boolean;
   firmware: boolean;
   latest: string | null;
   install: InstallInfo | null;

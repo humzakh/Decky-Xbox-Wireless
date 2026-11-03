@@ -10,6 +10,7 @@ Layout (see https://github.com/dlundqvist/xone):
               driver -> xone-gip-gamepad
               power_supply/gipN.0/                status, capacity_level, model_name
               leds/gipN.0:white:status/           brightness, max_brightness, mode
+              chat_mix                            headset game/chat dial, 0-100 (our patch)
           gipN.1/                                 attachments (headset, chatpad)
   /sys/bus/usb/drivers/xone-wired/<intf>/gipN/... same, for USB-connected devices
 
@@ -236,6 +237,7 @@ def _read_client(client_dir, name):
         "name": model or _default_name(kind, gip_class),
         "battery": battery,
         "led": _read_led(client_dir),
+        "chat_mix": _read_int(os.path.join(client_dir, "chat_mix")),
     }
 
 
@@ -332,6 +334,10 @@ def read_state():
         "dongles": read_dongles(),
         "wired": read_wired(),
     }
+
+
+def chat_mix_path(client_id):
+    return _path(GIP_BUS, "devices", client_id, "chat_mix")
 
 
 def _dongle_dir(dongle_id):

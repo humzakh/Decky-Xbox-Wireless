@@ -1,0 +1,105 @@
+Expose the game/chat dial of standalone headsets as a chat_mix sysfs attribute
+(0-100, 50 centered). The headset sends it with every audio volume packet, which
+xone otherwise drops; poll() on the attribute wakes up when it changes.
+
+--- a/bus/bus.h
++++ b/bus/bus.h
+@@ -74,6 +74,9 @@ struct gip_client {
+ 	struct gip_chunk_buffer *chunk_buf_in;
+ 	struct gip_hardware hardware;
+ 
++	/* game/chat balance dial, 0-100 (50 is centered) */
++	u8 audio_chat_mix;
++
+ 	struct gip_info_element *client_commands;
+ 	struct gip_info_element *firmware_versions;
+ 	struct gip_info_element *audio_formats;
+--- a/bus/protocol.c
++++ b/bus/protocol.c
+@@ -1449,6 +1449,8 @@ static int gip_handle_pkt_audio_volume(struct gip_client *client,
+ 	if (len != sizeof(*pkt))
+ 		return -EINVAL;
+ 
++	client->audio_chat_mix = pkt->chat;
++
+ 	if (down_trylock(&client->drv_lock))
+ 		return -EBUSY;
+ 
+--- a/driver/headset.c
++++ b/driver/headset.c
+@@ -6,6 +6,7 @@
+ #include <linux/module.h>
+ #include <linux/hrtimer.h>
+ #include <linux/version.h>
++#include <linux/sysfs.h>
+ #include <sound/core.h>
+ #include <sound/initval.h>
+ #include <sound/pcm.h>
+@@ -49,6 +50,8 @@ struct gip_headset {
+ 	struct gip_auth auth;
+ 
+ 	bool chat_headset;
++	/* chat_mix attribute, NULL for headsets without a dial */
++	struct kernfs_node *chat_mix;
+ 
+ 	struct work_struct work_config;
+ 	struct delayed_work work_power_on;
+@@ -483,6 +486,16 @@ static int gip_headset_op_audio_ready(struct gip_client *client)
+ 	return 0;
+ }
+ 
++static ssize_t chat_mix_show(struct device *dev,
++			     struct device_attribute *attr, char *buf)
++{
++	struct gip_client *client = container_of(dev, struct gip_client, dev);
++
++	return sysfs_emit(buf, "%u\n", client->audio_chat_mix);
++}
++
++static DEVICE_ATTR_RO(chat_mix);
++
+ static int gip_headset_op_audio_volume(struct gip_client *client,
+ 				       u8 in, u8 out)
+ {
+@@ -491,6 +504,10 @@ static int gip_headset_op_audio_volume(struct gip_client *client,
+ 	/* headset reported initial volume, ready to start audio I/O */
+ 	headset->got_initial_volume = true;
+ 
++	/* the dial moved, wake up anyone polling chat_mix */
++	if (headset->chat_mix)
++		sysfs_notify_dirent(headset->chat_mix);
++
+ 	/* ignore hardware volume, let software handle volume changes */
+ 	return 0;
+ }
+@@ -561,6 +578,17 @@ static int gip_headset_probe(struct gip_client *client)
+ 
+ 	dev_set_drvdata(&client->dev, headset);
+ 
++	/* only standalone headsets have a game/chat dial */
++	if (!client->id && !headset->chat_headset) {
++		client->audio_chat_mix = 50;
++		if (device_create_file(&client->dev, &dev_attr_chat_mix))
++			dev_warn(&client->dev, "%s: chat_mix attribute failed\n",
++				 __func__);
++		else
++			headset->chat_mix = sysfs_get_dirent(client->dev.kobj.sd,
++							     "chat_mix");
++	}
++
+ 	/* start audio configuration */
+ 	schedule_work(&headset->work_config);
+ 
+@@ -571,6 +599,12 @@ static void gip_headset_remove(struct gip_client *client)
+ {
+ 	struct gip_headset *headset = dev_get_drvdata(&client->dev);
+ 
++	if (headset->chat_mix) {
++		sysfs_put(headset->chat_mix);
++		headset->chat_mix = NULL;
++		device_remove_file(&client->dev, &dev_attr_chat_mix);
++	}
++
+ 	cancel_work_sync(&headset->work_config);
+ 	cancel_delayed_work_sync(&headset->work_power_on);
+ 	cancel_work_sync(&headset->work_register);

@@ -35,6 +35,7 @@ CA_BUNDLES = [
 PATCHES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "patches")
 
 FIRMWARE_GLOB = "/lib/firmware/xone_dongle_*.bin"
+MODULES_DIR = "/sys/module"
 PACMAN_LOCK = "/var/lib/pacman/db.lck"
 
 # Decky's bundled Python sets LD_LIBRARY_PATH etc. for itself; system tools
@@ -109,6 +110,29 @@ def firmware_present():
     return bool(glob.glob(FIRMWARE_GLOB))
 
 
+async def outdated_modules(runner):
+    """
+    xone modules still running from before the last install. uninstall.sh can't
+    unload the headset module while PipeWire has its sound card open, and so not
+    xone_gip either; only a restart (or unplugging everything) loads the new ones.
+    """
+    try:
+        names = sorted(n for n in os.listdir(MODULES_DIR) if n.startswith("xone_"))
+    except OSError:
+        return []
+    outdated = []
+    for name in names:
+        try:
+            with open(os.path.join(MODULES_DIR, name, "srcversion")) as f:
+                loaded = f.read().strip()
+        except OSError:
+            continue
+        rc, built = await runner.capture(["modinfo", "-F", "srcversion", name])
+        if rc == 0 and built and built != loaded:
+            outdated.append(name)
+    return outdated
+
+
 def fetch_latest_release():
     """Tag name of the latest GitHub release, e.g. "v0.5.8". Blocking."""
     req = urllib.request.Request(
@@ -164,6 +188,7 @@ async def status(runner):
         # installed for some other kernel only, e.g. after a kernel update
         "stale_versions": sorted({e["version"] for e in entries if e is not current}),
         "loaded_version": loaded,
+        "restart_needed": bool(await outdated_modules(runner)),
         "firmware": firmware_present(),
     }
 
@@ -172,6 +197,7 @@ async def install(runner, tag, workdir, user):
     """
     Mirror of `git clone && sudo make install`, i.e. install.sh followed by
     install/firmware.sh, with the SteamOS prerequisites set up first.
+    Returns whether a restart is needed to load it.
     """
     log = runner.log
     kernel = os.uname().release
@@ -217,4 +243,8 @@ async def install(runner, tag, workdir, user):
     finally:
         if readonly == "enabled":
             await runner.run(["steamos-readonly", "enable"], check=False)
+    outdated = await outdated_modules(runner)
+    if outdated:
+        log(f"Still running the old {', '.join(outdated)} (in use); restart to load {tag}")
     log(f"xone {tag} installed")
+    return bool(outdated)
