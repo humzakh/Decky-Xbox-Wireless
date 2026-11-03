@@ -2,6 +2,7 @@ import { Field, IconsModule, findClassModule } from "@decky/ui";
 import { ReactElement, ReactNode } from "react";
 import { CRITICAL_LEVEL, acState, batteryFraction, batteryText } from "./battery";
 import { onControllerPage } from "./ControllerSubPage";
+import { DisconnectedRows, DisconnectedSection } from "./DisconnectedControllers";
 import { LedSlider } from "./LedSlider";
 import { patchSettingsPage } from "./SettingsPatch";
 import { SilentBoundary } from "./SilentBoundary";
@@ -117,6 +118,8 @@ function swapTypes(el: any, swap: (f: FC) => FC | undefined): any {
 
 const withChildren = (el: any, children: any[]) => ({ ...el, props: { ...el.props, children } });
 
+const localize = (token: string): string | null => (window as any).LocalizationManager?.LocalizeString?.(token) ?? null;
+
 /**
  * Additions to Steam's Settings > Controller pages:
  * - a controller's connection and battery on its page, as Steam shows its own controllers', and the LED
@@ -125,6 +128,7 @@ const withChildren = (el: any, children: any[]) => ({ ...el, props: { ...el.prop
  * - an "Xbox Controller Adapters" section on the main Controller page, under Steam's adapters:
  *   each adapter with a details sub-page of its devices, then the xone driver
  * - "Xbox Wireless Adapter" as what xone's controllers are connected through, in that page's list
+ * - controllers that connected to a plugged-in adapter before, under that page's "Disconnected Controllers"
  * The Controller page renders its sub-pages directly, so we wrap it, the type switch inside it
  * and the sub-pages in turn. If Steam moves any of these, the pages render untouched.
  */
@@ -212,8 +216,38 @@ export function addControllerSettings() {
     return withChildren(ret, [...children.slice(0, lastAt), adapters, ...children.slice(lastAt)]);
   };
 
+  // Steam only has "Disconnected Controllers" while its own adapter has some; add ours to it, or
+  // the section itself under "Connected Controllers" when Steam leaves it out
+  const addDisconnected = (ret: any) => {
+    const children = ret?.props?.children;
+    const header = localize("#Settings_Controller_DisconnectedHeader");
+    if (!Array.isArray(children) || !header) return ret;
+    const sectionAt = (label: string | null) => (label ? children.findIndex((c: any) => c?.props?.label === label) : -1);
+
+    const steamAt = sectionAt(header);
+    if (steamAt >= 0) {
+      const section = children[steamAt];
+      const rows = section.props.children;
+      const ours = (
+        <SilentBoundary key="xbox-wireless-disconnected" name="disconnected controllers">
+          <DisconnectedRows />
+        </SilentBoundary>
+      );
+      const updated = withChildren(section, [...(Array.isArray(rows) ? rows : [rows]), ours]);
+      return withChildren(ret, children.map((c: any, i: number) => (i === steamAt ? updated : c)));
+    }
+    const connectedAt = sectionAt(localize("#Settings_Controller_ConnectedHeader"));
+    if (connectedAt < 0) return ret;
+    const section = (
+      <SilentBoundary key="xbox-wireless-disconnected" name="disconnected controllers section">
+        <DisconnectedSection Section={children[connectedAt].type} label={header} />
+      </SilentBoundary>
+    );
+    return withChildren(ret, [...children.slice(0, connectedAt + 1), section, ...children.slice(connectedAt + 1)]);
+  };
+
   const inMenuPage = (ret: any) =>
-    swapTypes(addAdapters(ret), (f) => (isControllerRow(f) ? wrap(f, addConnection) : undefined));
+    swapTypes(addAdapters(addDisconnected(ret)), (f) => (isControllerRow(f) ? wrap(f, addConnection) : undefined));
 
   // Steam doesn't know our sub-pages and falls back to its menu; show ours instead
   const ourPage = () => {

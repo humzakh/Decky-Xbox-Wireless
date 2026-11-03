@@ -48,6 +48,17 @@ export interface Device {
   interface?: string;
 }
 
+/** A device that has connected to an adapter before but isn't connected now. */
+export interface KnownDevice {
+  // the client "key" it was saved under
+  key: string;
+  name: string;
+  kind: Client["kind"];
+  vendor_id: string | null;
+  product_id: string | null;
+  connected_at: number | null;
+}
+
 export interface Dongle {
   id: string;
   product_id: string;
@@ -58,6 +69,8 @@ export interface Dongle {
   devices: Device[];
   // announcing clients that never finish connecting; only unplugging it clears this
   stuck: boolean;
+  // devices that connected to it before, most recent first
+  disconnected: KnownDevice[];
 }
 
 // shown for a stuck dongle
@@ -95,6 +108,7 @@ export const setPairing = callable<[dongleId: string, enabled: boolean], Result>
 export const powerOff = callable<[dongleId: string, slot: number], Result>("power_off");
 export const setLed = callable<[clientId: string, brightness: number | null, mode: number | null], Result>("set_led");
 export const resetLed = callable<[clientId: string], Result>("reset_led");
+export const forgetDevice = callable<[dongleId: string, key: string], Result>("forget_device");
 
 export interface InstallInfo {
   tag: string;

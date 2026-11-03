@@ -25,16 +25,20 @@ if [[ "${1:-}" == "zip" ]]; then
   echo "out/$NAME.zip"
 elif [[ -n "${1:-}" ]]; then
   host=$1
+  # Decky only hot-reloads plugins flagged "debug"
+  sed -i.bak 's/"flags": \["root"\]/"flags": ["root", "debug"]/' "$stage/$NAME/plugin.json" && rm "$stage/$NAME/plugin.json.bak"
   rsync -az --delete "$stage/$NAME/" "$host:/tmp/$NAME/"
+  # plugins dir is root-owned; -t so sudo can prompt for a password. Decky hot-reloads
+  # just this plugin when its files change, so it never needs restarting; its watcher
+  # misses rsync's renames, so touch a file it does notice.
+  ssh -t "$host" "sudo rsync -a --delete /tmp/$NAME/ ~/homebrew/plugins/$NAME/ && sudo touch ~/homebrew/plugins/$NAME/main.py && rm -rf /tmp/$NAME"
+  # then a fresh Steam UI, so nothing patched by the old version lingers
   ssh "$host" 'start=/tmp/steamos-short-session-start
     if [ -f "$start" ]; then
       age=$(( $(date +%s) - $(date +%s -r "$start") ))
       if [ "$age" -lt 65 ]; then echo "waiting $((65 - age))s before restarting Steam"; sleep $((65 - age)); fi
     fi
-    systemctl --user restart steam-launcher.service && echo "Steam restarted"
-    for _ in $(seq 60); do curl -s localhost:8080/json | grep -q SharedJSContext && break; sleep 1; done'
-  # plugins dir is root-owned; -t so sudo can prompt for a password
-  ssh -t "$host" "sudo rsync -a --delete /tmp/$NAME/ ~/homebrew/plugins/$NAME/ && rm -rf /tmp/$NAME && sudo systemctl restart plugin_loader"
+    systemctl --user restart steam-launcher.service && echo "Steam restarted"'
 else
   echo "usage: $0 zip | <user@host>" >&2
   exit 1

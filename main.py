@@ -31,6 +31,9 @@ DEFAULT_SETTINGS = {
     "chat_mix": True,
     # per controller, keyed by client "key": {"brightness": int, "mode": int}
     "leds": {},
+    # what has connected to each adapter, by adapter serial then client "key":
+    # {"name", "kind", "vendor_id", "product_id", "connected_at"}
+    "adapter_devices": {},
 }
 
 
@@ -76,6 +79,16 @@ class Plugin:
         result = _result(xone.power_off, dongle_id, slot)
         await self._poll()
         return result
+
+    async def forget_device(self, dongle_id, key):
+        """Drop a disconnected device from what the plugin remembers for an adapter."""
+        dongle = next((d for d in (self.state or xone.read_state())["dongles"] if d["id"] == dongle_id), None)
+        devices = self.settings["adapter_devices"].get(dongle["serial"], {}) if dongle else {}
+        if devices.pop(key, None) is None:
+            return {"ok": False, "error": "No such device"}
+        self._save_settings()
+        await self._poll()
+        return {"ok": True}
 
     async def set_led(self, client_id, brightness=None, mode=None):
         """Apply to one controller and remember it for when that controller reconnects."""
@@ -134,6 +147,7 @@ class Plugin:
         self.pairing_started = {}
         # (dongle id, adapter) -> when it was first seen still connecting
         self.connecting_since = {}
+        self.connected_keys = set()
         self.snapshot_json = None
         self.poll_lock = asyncio.Lock()
         self.chat_mixer = chat_mix.ChatMixer(
@@ -215,6 +229,7 @@ class Plugin:
     async def _poll_locked(self):
         state = xone.read_state()
         self._mark_stuck(state)
+        self._remember_devices(state)
         prev = self.state
         self.state = state
         if prev is not None:
@@ -247,6 +262,43 @@ class Plugin:
             stale = [a for a in connecting if now - seen[(dongle["id"], a)] >= STUCK_SECONDS]
             dongle["stuck"] = len(stale) >= STUCK_CONNECTING
         self.connecting_since = seen
+
+    def _remember_devices(self, state):
+        """Remember what connects to each adapter, and list on it the ones not connected now."""
+        known = self.settings["adapter_devices"]
+        connected = {
+            d["clients"][0]["key"]
+            for _, d in self._all_devices(state)
+            if d["clients"] and not d["partial"] and d["clients"][0]["key"]
+        }
+        changed = False
+        for dongle in state["dongles"]:
+            serial = dongle["serial"]
+            for device in dongle["devices"] if serial else []:
+                if not device["clients"] or device["partial"]:
+                    continue
+                main = device["clients"][0]
+                if not main["key"]:
+                    continue
+                entry = {k: main[k] for k in ("name", "kind", "vendor_id", "product_id")}
+                saved = known.get(serial, {}).get(main["key"])
+                if main["key"] not in self.connected_keys or saved is None:
+                    entry["connected_at"] = time.time()
+                elif any(saved.get(k) != v for k, v in entry.items()):
+                    entry["connected_at"] = saved.get("connected_at")
+                else:
+                    continue
+                known.setdefault(serial, {})[main["key"]] = entry
+                changed = True
+            gone = [
+                {"key": key, **entry}
+                for key, entry in known.get(serial, {}).items()
+                if key not in connected
+            ]
+            dongle["disconnected"] = sorted(gone, key=lambda e: -(e.get("connected_at") or 0))
+        self.connected_keys = connected
+        if changed:
+            self._save_settings()
 
     def _snapshot(self):
         return {

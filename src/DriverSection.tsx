@@ -108,31 +108,37 @@ function useDriver() {
   };
 }
 
+function installStatus(install: InstallInfo) {
+  if (install.running) return `Installing ${install.tag}…`;
+  return install.error ? `Failed: ${install.error}` : `Installed ${install.tag}`;
+}
+
 function InstallLog({ install, lines }: { install: InstallInfo; lines: string[] }) {
-  const status = install.running
-    ? `Installing ${install.tag}…`
-    : install.error
-      ? `Failed: ${install.error}`
-      : `Installed ${install.tag}`;
   return (
     <>
-      <Field label={status} description={install.running ? undefined : `Full log: ${install.log_file}`} />
-      <div
-        style={{
-          fontFamily: "monospace",
-          fontSize: "10px",
-          lineHeight: 1.35,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          background: "rgba(0, 0, 0, 0.35)",
-          borderRadius: "4px",
-          padding: "6px",
-          marginBottom: "8px",
-        }}
-      >
-        {lines.slice(-LOG_LINES).join("\n") || "Starting…"}
-      </div>
+      <Field label={installStatus(install)} description={install.running ? undefined : `Full log: ${install.log_file}`} />
+      <LogLines lines={lines} />
     </>
+  );
+}
+
+function LogLines({ lines }: { lines: string[] }) {
+  return (
+    <div
+      style={{
+        fontFamily: "monospace",
+        fontSize: "10px",
+        lineHeight: 1.35,
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-all",
+        background: "rgba(0, 0, 0, 0.35)",
+        borderRadius: "4px",
+        padding: "6px",
+        marginBottom: "8px",
+      }}
+    >
+      {lines.slice(-LOG_LINES).join("\n") || "Starting…"}
+    </div>
   );
 }
 
@@ -198,36 +204,36 @@ export function DriverSettingsRows() {
   if (!driver) return <Field label="Checking driver…" />;
 
   const { status, lines, checking, running, installed, label, description } = driver;
+  const install = status.install;
+  // one row: what's installed, its install log once there is one, and the one action that fits;
+  // reinstalling is left to the plugin panel
+  const [action, onClick] = !installed
+    ? ["Install", driver.installLatest]
+    : driver.update
+      ? [`Update to ${status.latest}`, driver.update]
+      : [checking ? "Checking…" : "Check For Updates", driver.checkUpdates];
   return (
     <>
       {state?.dongles.some((d) => d.stuck) && <Field label={STUCK_TITLE} description={STUCK_FIX} />}
-      {installed ? (
-        <>
-          {driver.update ? (
-            <ButtonItem label={label} description={description} layout="inline" disabled={running} onClick={driver.update}>
-              Update to {status.latest}
-            </ButtonItem>
+      <ButtonItem
+        label={installed ? `Driver: xone ${installed}` : label}
+        description={
+          install ? (
+            <>
+              {installStatus(install)}
+              {!install.running && ` · Full log: ${install.log_file}`}
+              <LogLines lines={lines} />
+            </>
           ) : (
-            <ButtonItem
-              label={label}
-              description={description}
-              layout="inline"
-              disabled={running || checking}
-              onClick={driver.checkUpdates}
-            >
-              {checking ? "Checking…" : "Check for updates"}
-            </ButtonItem>
-          )}
-          <ButtonItem label="Reinstall driver" layout="inline" disabled={running} onClick={driver.reinstall}>
-            {running ? "Installing…" : "Reinstall"}
-          </ButtonItem>
-        </>
-      ) : (
-        <ButtonItem label={label} description={description} layout="inline" disabled={running} onClick={driver.installLatest}>
-          {running ? "Installing…" : "Install"}
-        </ButtonItem>
-      )}
-      {status.install && <InstallLog install={status.install} lines={lines} />}
+            description
+          )
+        }
+        layout="inline"
+        disabled={running || checking}
+        onClick={onClick}
+      >
+        {running ? "Installing…" : action}
+      </ButtonItem>
     </>
   );
 }

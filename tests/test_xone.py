@@ -219,6 +219,7 @@ class PluginTest(unittest.TestCase):
         self.plugin.state = None
         self.plugin.pairing_started = {}
         self.plugin.connecting_since = {}
+        self.plugin.connected_keys = set()
         self.plugin.snapshot_json = None
         self.plugin.poll_lock = asyncio.Lock()
         self.plugin.install_task = None
@@ -365,6 +366,32 @@ class PluginTest(unittest.TestCase):
 
         asyncio.run(self.plugin.set_setting("chat_mix", False))
         self.assertEqual(self.chat_mix_headsets[-1], {})
+
+    def test_adapter_remembers_devices(self):
+        self.fs.set_slots([0])
+        self.fs.add_client(0, usb_id=("045e", "0b12"), serial="S1")
+        self.poll()
+        self.assertEqual(self.plugin.state["dongles"][0]["disconnected"], [])
+
+        self.fs.remove_adapter(0)
+        self.fs.set_slots([])
+        self.poll()
+        gone = self.plugin.state["dongles"][0]["disconnected"]
+        self.assertEqual([(d["key"], d["name"]) for d in gone], [("serial:S1", "Xbox Series X|S Controller")])
+        saved = self.plugin._load_settings()["adapter_devices"]
+        self.assertEqual(list(saved), ["ABC123"])
+        self.assertIn("serial:S1", saved["ABC123"])
+
+        res = asyncio.run(self.plugin.forget_device("1-2:1.0", "serial:S1"))
+        self.assertEqual(res, {"ok": True})
+        self.assertEqual(self.plugin.state["dongles"][0]["disconnected"], [])
+        self.assertFalse(asyncio.run(self.plugin.forget_device("1-2:1.0", "serial:S1"))["ok"])
+
+        # back on
+        self.fs.set_slots([0])
+        self.fs.add_client(0, usb_id=("045e", "0b12"), serial="S1")
+        self.poll()
+        self.assertEqual(self.plugin.state["dongles"][0]["disconnected"], [])
 
     def test_pairing_tracking(self):
         res = asyncio.run(self.plugin.set_pairing("1-2:1.0", True))

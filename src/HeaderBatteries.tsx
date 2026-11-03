@@ -7,7 +7,7 @@ import { steamIndexOf } from "./steamControllers";
 import { useXoneState } from "./useXoneState";
 
 // Steam's EControllerType; all Xbox types draw the same icon
-const XBOX_ONE_CONTROLLER = 32;
+export const XBOX_ONE_CONTROLLER = 32;
 function DeviceBattery({ client, classes, onActivate }: {
   client: Client;
   classes: Record<string, string>;

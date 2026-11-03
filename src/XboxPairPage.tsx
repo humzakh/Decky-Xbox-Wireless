@@ -16,12 +16,26 @@ function pairingClasses() {
   return classes!;
 }
 
+let rowClasses: Record<string, string> | undefined;
+// Steam's connected-controller row label, with what it's connected through on the right
+const labelClasses = () => (rowClasses ??= (findClassModule((m) => m.ControllerLabel && m.Dongle) as any) ?? {});
+
 /** The row added to "Add a new controller", under Steam's Bluetooth one, while an adapter is plugged in. */
 export function XboxPairRow() {
   const state = useXoneState();
   if (!state?.dongles.length) return null;
+  const c = labelClasses();
   return (
-    <ButtonItem label={TITLE} layout="inline" onClick={() => navigateControllerSettings(XBOX_PAIR_ROUTE)}>
+    <ButtonItem
+      label={
+        <div className={c.ControllerLabel}>
+          <div className={c.Text}>{TITLE}</div>
+          <div className={c.Dongle}>{state.dongles[0].model}</div>
+        </div>
+      }
+      layout="inline"
+      onClick={() => navigateControllerSettings(XBOX_PAIR_ROUTE)}
+    >
       Pair
     </ButtonItem>
   );
